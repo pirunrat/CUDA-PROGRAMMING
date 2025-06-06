@@ -1,0 +1,19 @@
+{
+  "configurations": [
+    {
+      "name": "MinGW",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "C:/Users/user/Desktop/opencv/build/install/include",             // <-- updated for MinGW build
+        "C:/Users/user/Desktop/opencv/build/install/include/opencv2",     // <-- explicitly add opencv2
+        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/include"
+      ],
+      "defines": [],
+      "compilerPath": "C:/MinGW/bin/g++.exe",                         // <-- point to your g++ binary
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-gcc-x64"                               // <-- switch from MSVC to GCC
+    }
+  ],
+  "version": 4
+}
