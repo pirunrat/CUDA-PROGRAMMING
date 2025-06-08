@@ -13,7 +13,7 @@ int main() {
     std::cout << "✅ Image loaded successfully." << std::endl;
 
     cv::imshow("My Image", img);
-    std::cout << "ℹ️ Press any key in the image window to close..." << std::endl;
+    std::cout << "Press any key in the image window to close..." << std::endl;
     cv::waitKey(0);
 
     return 0;

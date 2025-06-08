@@ -1,7 +1,8 @@
 #include <iostream>
-#include <opencv2/opencv.hpp>
+#include <vector>
 #include <cuda_runtime.h>
 
+// ================= CUDA Kernel =================
 __global__ void invertKernel(unsigned char* d_image, int width, int height) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -11,45 +12,60 @@ __global__ void invertKernel(unsigned char* d_image, int width, int height) {
     }
 }
 
-int main() {
-    std::cout << "🔍 Loading image..." << std::endl;
-    cv::Mat image = cv::imread("me.jpg", cv::IMREAD_GRAYSCALE);
+// ================= Utility Functions =================
 
-    if (image.empty()) {
-        std::cerr << "❌ Failed to load 'me.jpg'. Check if the file exists." << std::endl;
-        return -1;
+std::vector<unsigned char> simulateImage(int width, int height) {
+    std::vector<unsigned char> image(width * height);
+    for (int i = 0; i < width * height; ++i) {
+        image[i] = static_cast<unsigned char>(i * 255 / (width * height));
     }
+    return image;
+}
 
-    std::cout << "✅ Loaded image size: " << image.cols << "x" << image.rows << std::endl;
+void printImage(const std::vector<unsigned char>& image, int width, int height, const std::string& label) {
+    std::cout << "\n" << label << ":\n";
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            std::cout << static_cast<int>(image[y * width + x]) << "\t";
+        }
+        std::cout << "\n";
+    }
+}
 
+std::vector<unsigned char> invertImageCUDA(const std::vector<unsigned char>& input, int width, int height) {
+    size_t img_size = width * height;
     unsigned char* d_image;
-    size_t img_size = image.rows * image.cols;
 
+    // Allocate and copy to device
     cudaMalloc(&d_image, img_size);
-    cudaMemcpy(d_image, image.data, img_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_image, input.data(), img_size, cudaMemcpyHostToDevice);
 
+    // Launch kernel
     dim3 block(16, 16);
-    dim3 grid((image.cols + 15) / 16, (image.rows + 15) / 16);
-
-    std::cout << "🚀 Running CUDA kernel..." << std::endl;
-    invertKernel<<<grid, block>>>(d_image, image.cols, image.rows);
+    dim3 grid((width + 15) / 16, (height + 15) / 16);
+    invertKernel<<<grid, block>>>(d_image, width, height);
     cudaDeviceSynchronize();
 
-    cv::Mat result(image.size(), CV_8UC1);
-    cudaMemcpy(result.data, d_image, img_size, cudaMemcpyDeviceToHost);
+    // Copy result back
+    std::vector<unsigned char> output(img_size);
+    cudaMemcpy(output.data(), d_image, img_size, cudaMemcpyDeviceToHost);
     cudaFree(d_image);
 
-    std::cout << "💾 Saving result to 'output.jpg'..." << std::endl;
-    if (cv::imwrite("output.jpg", result)) {
-        std::cout << "✅ Inverted image saved as 'output.jpg'" << std::endl;
-    } else {
-        std::cerr << "❌ Failed to save image." << std::endl;
-    }
+    return output;
+}
 
-    // Optional: show result
-    cv::imshow("Original", image);
-    cv::imshow("Inverted", result);
-    cv::waitKey(0);
+// ================= Main =================
+
+int main() {
+    const int width = 8;
+    const int height = 8;
+
+    auto image = simulateImage(width, height);
+    printImage(image, width, height, "🔍 Simulated Image");
+
+    std::cout << "\n🚀 Running CUDA kernel..." << std::endl;
+    auto inverted = invertImageCUDA(image, width, height);
+    printImage(inverted, width, height, "✅ Inverted Image");
 
     return 0;
 }
