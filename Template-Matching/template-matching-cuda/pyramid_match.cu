@@ -8,7 +8,10 @@
 #define EXPORT
 #endif
 
-__global__ void ncc_kernel(const unsigned char* img, int img_w, int img_h,
+// ─────────────────────────────────────────────────────────────
+// CUDA Kernel: Normalized Cross-Correlation
+// ─────────────────────────────────────────────────────────────
+__global__ void ncc_kernel(const unsigned char* img, int img_w, int img_h, 
                            const unsigned char* tmpl, int tmpl_w, int tmpl_h,
                            float tmpl_mean, float tmpl_var,
                            float* result) {
@@ -17,9 +20,7 @@ __global__ void ncc_kernel(const unsigned char* img, int img_w, int img_h,
 
     if (x + tmpl_w > img_w || y + tmpl_h > img_h) return;
 
-    float sum_i = 0.0f;
-    float sum_i2 = 0.0f;
-    float sum_it = 0.0f;
+    float sum_i = 0.0f, sum_i2 = 0.0f, sum_it = 0.0f;
 
     for (int j = 0; j < tmpl_h; ++j) {
         for (int i = 0; i < tmpl_w; ++i) {
@@ -29,7 +30,7 @@ __global__ void ncc_kernel(const unsigned char* img, int img_w, int img_h,
             float iv = img[img_idx];
             float tv = tmpl[tmpl_idx];
 
-            sum_i += iv;
+            sum_i  += iv;
             sum_i2 += iv * iv;
             sum_it += iv * tv;
         }
@@ -37,41 +38,70 @@ __global__ void ncc_kernel(const unsigned char* img, int img_w, int img_h,
 
     int N = tmpl_w * tmpl_h;
     float mean_i = sum_i / N;
-    float var_i = sum_i2 / N - mean_i * mean_i;
+    float var_i  = sum_i2 / N - mean_i * mean_i;
 
-    if (var_i <= 1e-5f || tmpl_var <= 1e-5f) {
-        result[y * img_w + x] = 0.0f;
-    } else {
-        result[y * img_w + x] = (sum_it - N * mean_i * tmpl_mean) / (N * sqrtf(var_i * tmpl_var));
+    float score = 0.0f;
+    if (var_i > 1e-5f && tmpl_var > 1e-5f) {
+        score = (sum_it - N * mean_i * tmpl_mean) / (N * sqrtf(var_i * tmpl_var));
     }
+    result[y * img_w + x] = score;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Device Memory Allocation & Launch Helpers
+// ─────────────────────────────────────────────────────────────
+void launch_ncc_kernel(const unsigned char* d_img, int img_w, int img_h,
+                       const unsigned char* d_tmpl, int tmpl_w, int tmpl_h,
+                       float tmpl_mean, float tmpl_var, float* d_result) {
+    dim3 block(16, 16);
+    dim3 grid((img_w + block.x - 1) / block.x, (img_h + block.y - 1) / block.y);
+
+    ncc_kernel<<<grid, block>>>(d_img, img_w, img_h, d_tmpl, tmpl_w, tmpl_h,
+                                tmpl_mean, tmpl_var, d_result);
+    cudaDeviceSynchronize();
+}
+
+void allocate_and_copy_to_device(const unsigned char* h_data, size_t size, unsigned char** d_data) {
+    cudaMalloc((void**)d_data, size);
+    cudaMemcpy(*d_data, h_data, size, cudaMemcpyHostToDevice);
+}
+
+void allocate_device_result(float** d_result, size_t size) {
+    cudaMalloc((void**)d_result, size);
+}
+
+void copy_result_to_host(float* h_result, float* d_result, size_t size) {
+    cudaMemcpy(h_result, d_result, size, cudaMemcpyDeviceToHost);
+}
+
+void free_device_memory(void* ptr) {
+    cudaFree(ptr);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Entry Point (C interface)
+// ─────────────────────────────────────────────────────────────
 extern "C" EXPORT void match_template(const unsigned char* img, int img_w, int img_h,
                                       const unsigned char* tmpl, int tmpl_w, int tmpl_h,
                                       float tmpl_mean, float tmpl_var,
                                       float* result) {
-    unsigned char *d_img, *d_tmpl;
-    float *d_result;
+    unsigned char *d_img = nullptr, *d_tmpl = nullptr;
+    float *d_result = nullptr;
 
-    size_t img_size = img_w * img_h * sizeof(unsigned char);
+    size_t img_size  = img_w * img_h * sizeof(unsigned char);
     size_t tmpl_size = tmpl_w * tmpl_h * sizeof(unsigned char);
-    size_t res_size = img_w * img_h * sizeof(float);
+    size_t res_size  = img_w * img_h * sizeof(float);
 
-    cudaMalloc(&d_img, img_size);
-    cudaMalloc(&d_tmpl, tmpl_size);
-    cudaMalloc(&d_result, res_size);
+    allocate_and_copy_to_device(img, img_size, &d_img);
+    allocate_and_copy_to_device(tmpl, tmpl_size, &d_tmpl);
+    allocate_device_result(&d_result, res_size);
 
-    cudaMemcpy(d_img, img, img_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_tmpl, tmpl, tmpl_size, cudaMemcpyHostToDevice);
+    launch_ncc_kernel(d_img, img_w, img_h, d_tmpl, tmpl_w, tmpl_h,
+                      tmpl_mean, tmpl_var, d_result);
 
-    dim3 block(16, 16);
-    dim3 grid((img_w + block.x - 1) / block.x, (img_h + block.y - 1) / block.y);
-    ncc_kernel<<<grid, block>>>(d_img, img_w, img_h, d_tmpl, tmpl_w, tmpl_h, tmpl_mean, tmpl_var, d_result);
-    cudaDeviceSynchronize();
+    copy_result_to_host(result, d_result, res_size);
 
-    cudaMemcpy(result, d_result, res_size, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_img);
-    cudaFree(d_tmpl);
-    cudaFree(d_result);
+    free_device_memory(d_img);
+    free_device_memory(d_tmpl);
+    free_device_memory(d_result);
 }
